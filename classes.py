@@ -12,7 +12,7 @@ class Connection:
 		
 	def pubReq(self, coinAndCurr, category="", since="", currency="PLN"):
 		while(1):
-			time.sleep(1)
+			time.sleep(3)
 			try:
 				if since:
 					res = subprocess.check_output("curl -X GET https://bitbay.net/API/Public/%s%s/%s.json?since=%s" %(coinAndCurr,currency, category,since),  shell=True, encoding="utf-8")
@@ -20,7 +20,7 @@ class Connection:
 					res = subprocess.check_output("curl -X GET https://bitbay.net/API/Public/%s%s/%s.json" %(coinAndCurr, currency, category), shell=True, encoding="utf-8")
 					logging.debug("curl -X GET https://bitbay.net/API/Public/%s%s/%s.json" %(coinAndCurr, currency, category))
 					logging.debug("RES: %s" %res)
-				if "code" in res:
+				if "code" in str(res):
 					resList = json.loads(res)
 					raise ValueError(resList['message'])
 				if not res:
@@ -28,29 +28,31 @@ class Connection:
 				return res
 			except ValueError as e:
 				logging.error("Error: %s Try Again" %e)
-				time.sleep(1)
+				time.sleep(3)
 			except Exception as e:
 				logging.error("Error: %s Try Again" %repr(e))
-				time.sleep(1)
+				time.sleep(3)
 	
 	# privReq param takes key:value parameters delimites by comma e.g. "type:bid,payment_currency:PLN"
 	def privReq(self, meth, param=""):
 		while(1):
-			time.sleep(1)
+			time.sleep(3)
 			try:
-				res = subprocess.check_output("/usr/bin/php %s/classes/privateReq.php %s %s %s %s" %(os.getcwd(), self.publicKey, self.privateKey, meth, param), shell=True)
-				if "code" in res:
+				res = subprocess.check_output("/usr/bin/php %s/privateReq.php %s %s %s %s" %(os.getcwd(), self.publicKey, self.privateKey, meth, param), shell=True)
+				logging.debug("/usr/bin/php %s/privateReq.php %s %s %s %s" %(os.getcwd(), self.publicKey, self.privateKey, meth, param))
+				logging.debug("RES: %s" %res)
+				if "code" in str(res):
 					resList = json.loads(res)
 					raise ValueError(resList['message'])
 				if not res:
 					raise ValueError("No return")
 				return res
 			except ValueError as e:
-				logging.error("Error: %s Try Again" %e.value)
-				time.sleep(1)
-			except:
-				logging.error("Error. Try Again")
-				time.sleep(1)
+				logging.error("Error: %s Try Again" %e)
+				time.sleep(3)
+			except Exception as e:
+				logging.error("Error: %s Try Again" %repr(e))
+				time.sleep(3)
 
 	def ticker(self, coinAndCurr="BTCPLN"):
 		res = self.pubReq(coinAndCurr,"ticker")
@@ -123,6 +125,11 @@ class Connection:
 		resList = json.loads(res)
 		return resList
 		
+	def history(self, params=""):
+		res = self.privReq("history",params)
+		resList = json.loads(res)
+		return resList
+		
 	def transactions(self, params=""):
 		res = self.privReq("transactions",params)
 		resList = json.loads(res)
@@ -144,8 +151,8 @@ class MaxMin24:
 			self.param['coin'] = coin
 			self.param['state'] = "buy"
 			self.param['trans'] = trans
-			self.param['pln'] = pln
-			self.param['amount'] = 0
+			self.param['pln'] = float(pln)
+			self.param['amount'] = float(0)
 			self.param['provi'] = provi
 		'''
 			try:
@@ -191,42 +198,45 @@ class MaxMin24:
 		orders = self.connection.orders()
 		if len(orders):
 			for value in orders:
+				#logging.debug("Value of order: %s" %value)
 				if 'order_currency' in value:
-					if value['order_currency'] == coin:
-						return True
+					if value['order_currency'] == self.param["coin"]:
+						return "id:%s" %value['order_id']
 					else:
 						return False
 				else:
-					return True
+					return False
 		else:
 			return False
 			
 	def buyState(self):
 		min24, bid = self.getMin24AndBid()
-		self.param['amount'] = "%.8f" % (float(self.param['pln'])/bid)
-		if 1.007 * min24 > bid:
-			self.connection.trade("type:bid,currency:%s,amount:%.8f,payment_currency:PLN,rate:%s" %(self.param['coin'],self.param['amount'],bid))
-			time.sleep(1)
-			count = 15
-			while(isOrder() and count):
+		self.param['amount'] = float("%.8f" % (float(self.param['pln'])/bid))
+		if 1.1 * min24 > bid:
+			self.connection.trade("type:bid,currency:%s,amount:%.8f,payment_currency:PLN,rate:%s" %(self.param['coin'],self.param['amount'],bid+0.01))
+			time.sleep(3)
+			count = 5
+			while(self.isOrder() and count):
 				count = count -1
 				time.sleep(10)
-			if not count:
-				self.buyState()
+				if count == 0:
+					self.connection.cancel(self.isOrder())
+					return self.buyState()
 			return "%.8f" % (float(self.param['amount'])*(1-self.param['provi']))
 		return True
 		
 	def sellState(self):
-		max24, bid = self.getMax24AndAsk()
-		if 0.995 * max24 < bid:
-			self.connection.trade("type:ask,currency:%s,amount:%.8f,payment_currency:PLN,rate:%s" %(self.param['coin'],self.param['amount'],bid))
-			time.sleep(1)
-			count = 15
-			while(isOrder() and count):
+		max24, ask = self.getMax24AndAsk()
+		if 0.90 * max24 < ask:
+			self.connection.trade("type:ask,currency:%s,amount:%.8f,payment_currency:PLN,rate:%s" %(self.param['coin'],self.param['amount'],ask))
+			time.sleep(3)
+			count = 5
+			while(self.isOrder() and count):
 				count = count -1
 				time.sleep(10)
-			if not count:
-				self.sellState()
+				if count == 0:
+					self.connection.cancel(self.isOrder())
+					return self.sellState()
 			return "%.2f" % (float(self.param['amount']) * bid * (1-self.param['provi']))
 		return True	
 		
@@ -237,14 +247,14 @@ class MaxMin24:
 			if self.param['state'] == "buy":
 				while(1):
 					logging.info("BuyState")
-					self.param['amount'] = self.buyState()
+					self.param['amount'] = float(self.buyState())
 					if self.param['amount'] != True:
 						self.param['state'] = "sell"
 						break
 			elif self.param['state'] == "sell":
 				while(1):
-					loggin.info("SellState")
-					self.param['pln'] = self.sellState()
+					logging.info("SellState")
+					self.param['pln'] = float(self.sellState())
 					if self.param['pln'] != True:
 						self.param['state'] = "buy"
 						break
